@@ -2,6 +2,8 @@ import xerial.sbt.Sonatype.GitHubHosting
 
 Global / concurrentRestrictions := Seq(Tags.limit(Tags.Test, 1))
 
+ThisBuild / version := "3.20.1"
+
 lazy val commonSettings: Seq[Setting[_]] = Seq(
   organization          := "org.jetbrains",
   licenses              += ("MIT", url("https://opensource.org/licenses/MIT")),
@@ -47,7 +49,7 @@ lazy val ideaSupport = (project in file("ideaSupport"))
   .settings(commonSettings)
   .dependsOn(core, packaging, visualizer)
   .settings(
-    name := "sbt-idea-plugin",
+    name := "sbt-idea-scala3-plugin",
     libraryDependencies ++= Seq(
       "org.scalaj" %% "scalaj-http" % "2.4.2",
       "org.jetbrains" % "marketplace-zip-signer" % "0.1.8",

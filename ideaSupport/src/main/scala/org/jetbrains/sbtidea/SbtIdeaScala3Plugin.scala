@@ -13,4 +13,4 @@ abstract class AbstractSbtIdeaPlugin extends AutoPlugin {
   override def projectSettings: Seq[Setting[?]] = Keys.projectSettings
 }
 
-object SbtIdeaPlugin extends AbstractSbtIdeaPlugin
+object SbtIdeaScala3Plugin extends AbstractSbtIdeaPlugin

@@ -15,7 +15,7 @@ class SbtPackagingStructureExtractor(override val rootProject: ProjectRef,
                                      override val buildDependencies: BuildDependencies,
                                      _log: PluginLogger) extends SbtProjectStructureExtractorBase {
   override type ProjectDataType = SbtPackageProjectData
-  override type NodeType        = SbtPackagedProjectNodeImpl
+  override type NodeType = SbtPackagedProjectNodeImpl
 
   override implicit val log: PluginLogger = _log
 
@@ -34,7 +34,13 @@ class SbtPackagingStructureExtractor(override val rootProject: ProjectRef,
     data.additionalProjects.flatMap(findProjectRef).foldLeft(direct) { case (q, r) => topoSortRefs(r, q) }
 
   private def collectPackagingOptions(data: SbtPackageProjectData): ProjectPackagingOptions = {
-    implicit val scalaVersion: ProjectScalaVersion = ProjectScalaVersionImpl(data.definedDeps.find(_.name == "scala-library"))
+    implicit val scalaVersion: ProjectScalaVersion = ProjectScalaVersionImpl(data.definedDeps.find(ModuleID =>
+      ModuleID.name == "scala-library" | ModuleID.name == "scala3-library_3"))
+
+    def isScalaLibrary(moduleId: ModuleID): Boolean = moduleId.name match {
+      case "scala-library" | "scala3-library_3" => true
+      case _ => false
+    }
 
     validateProjectData(data)
 
