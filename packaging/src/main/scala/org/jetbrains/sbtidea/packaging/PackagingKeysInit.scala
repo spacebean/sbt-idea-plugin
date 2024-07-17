@@ -2,12 +2,11 @@ package org.jetbrains.sbtidea.packaging
 
 import org.jetbrains.sbtidea.packaging.artifact.*
 import org.jetbrains.sbtidea.packaging.mappings.*
-import org.jetbrains.sbtidea.packaging.structure.sbtImpl.SbtPackagingStructureExtractor
+import org.jetbrains.sbtidea.packaging.structure.sbtImpl.{SbtPackageProjectData, SbtPackagingStructureExtractor}
 import org.jetbrains.sbtidea.{NullLogger, SbtPluginLogger}
 import sbt.*
 import sbt.Def.spaceDelimited
 import sbt.Keys.*
-import sbt.jetbrains.ideaPlugin.apiAdapter.*
 
 trait PackagingKeysInit {
   this: PackagingKeys.type =>
@@ -27,7 +26,7 @@ trait PackagingKeysInit {
       if (workingDir == projectRoot)
         Seq.empty
       else
-        "org.scala-lang" % "scala3-.*" % ".*" -> None ::
+        "org.scala-lang" % "scala3-.*" % ".*"         -> None ::
         "org.scala-lang.modules" % "scala3-.*" % ".*" -> None ::
         "org.scala-lang" % "scala-.*" % ".*"          -> None ::
         "org.scala-lang.modules" % "scala-.*" % ".*"  -> None :: Nil
@@ -42,34 +41,19 @@ trait PackagingKeysInit {
 
     packageMappings := {
       streams.value.log.info("started dumping structure")
-      val rootProject = thisProjectRef.value
-      val buildDeps = buildDependencies.value
-      val data = dumpDependencyStructure.?.all(ScopeFilter(inAnyProject)).value.flatten.filterNot(_ == null)
-      val outputDir = packageOutputDir.value
-      val logger: SbtPluginLogger = new SbtPluginLogger(streams.value)
-      val structure = new SbtPackagingStructureExtractor(rootProject, data, buildDeps, logger).extract
-      val res = new LinearMappingsBuilder(outputDir, logger).buildMappings(structure)
-      logger.throwFatalErrors()
-      res
+      packageMappingsImpl(dumpDependencyStructure).value
     },
     packageMappingsOffline := {
       streams.value.log.info("started dumping offline structure")
-      val rootProject = thisProjectRef.value
-      val buildDeps = buildDependencies.value
-      val data = dumpDependencyStructureOffline.?.all(ScopeFilter(inAnyProject)).value.flatten.filterNot(_ == null)
-      val outputDir = packageOutputDir.value
-      val logger: SbtPluginLogger = new SbtPluginLogger(streams.value)
-      val structure = new SbtPackagingStructureExtractor(rootProject, data, buildDeps, logger).extract
-      val res = new LinearMappingsBuilder(outputDir, logger).buildMappings(structure)
-      logger.throwFatalErrors()
-      res
+      packageMappingsImpl(dumpDependencyStructureOffline).value
     },
     findLibraryMapping := {
       val args        = spaceDelimited("<arg>").parsed
       val rootProject = thisProjectRef.value
       val buildDeps   = buildDependencies.value
       val data        = dumpDependencyStructureOffline.?.all(ScopeFilter(inAnyProject)).value.flatten.filterNot(_ == null)
-      val structure   = new SbtPackagingStructureExtractor(rootProject, data, buildDeps, NullLogger).extract
+      val buildStructure = Keys.buildStructure.value
+      val structure   = new SbtPackagingStructureExtractor(rootProject, data, buildDeps, buildStructure, NullLogger).extract
       val result = structure.flatMap { node =>
         val mappings     = node.packagingOptions.libraryMappings.toMap
         val matchingLibs = node.libs.filter(lib => args.exists(token => lib.key.toString.contains(token)))
@@ -93,16 +77,15 @@ trait PackagingKeysInit {
       outputDir
     },
     packageArtifactDynamic := {
-      val compilationTimeStamp = System.currentTimeMillis()
       val outputDir = packageOutputDir.value
       val mappings = packageMappings.value
       val stream = streams.value
       val myTarget = target.value
-      val hints = extractAffectedFiles(compilationTimeStamp, compile.all(ScopeFilter(inAnyProject, inConfigurations(Compile))).value)
-      new DynamicDistBuilder(stream, myTarget, outputDir, hints).produceArtifact(mappings)
+      new DynamicDistBuilder(stream, myTarget, outputDir).produceArtifact(mappings)
       outputDir
     },
-    packageArtifactZip := {
+    packageArtifactZip := doPackageArtifactZip.value,
+    doPackageArtifactZip := {
       implicit val stream: TaskStreams = streams.value
       val outputDir = packageArtifact.value.getParentFile
       packageArtifactZipFile.?.value match {
@@ -116,4 +99,18 @@ trait PackagingKeysInit {
       }
     }
   )
+
+  private def packageMappingsImpl(keyFor: TaskKey[SbtPackageProjectData]): Def.Initialize[Task[Mappings]] = Def.task {
+    val rootProject = thisProjectRef.value
+    val buildDeps = buildDependencies.value
+    val data = keyFor.?.all(ScopeFilter(inAnyProject)).value.flatten.filterNot(_ == null)
+    val outputDir = packageOutputDir.value
+    val logger: SbtPluginLogger = new SbtPluginLogger(streams.value)
+    val buildStructure = Keys.buildStructure.value
+    val structure = new SbtPackagingStructureExtractor(rootProject, data, buildDeps, buildStructure, logger).extract
+    val res = new LinearMappingsBuilder(outputDir, logger).buildMappings(structure)
+    logger.throwFatalErrors()
+    res
+  }
+
 }

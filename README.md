@@ -73,7 +73,7 @@ incomplete, so it is strongly recommended to verify it against
 [available releases](https://www.jetbrains.com/intellij-repository/releases) and
 [available snapshots](https://www.jetbrains.com/intellij-repository/snapshots).
 
-**Note**: minimum supported major IDEA version: `211.x` (~`2021.1.x`)
+**Note**: minimum supported major IDEA version: `242.x` (~`2024.2.x`)
 
 #### `intellijPlatform in ThisBuild :: SettingKey[IntelliJPlatform]`
 
@@ -115,15 +115,29 @@ Plugins will be checked for compatibility against the `intellijBuild` you specif
 intellijPlugins += "com.intellij.properties".toPlugin
 // use Scala plugin as a dependency
 intellijPlugins += "org.intellij.scala".toPlugin
-// use Scala plugin version 2019.2.1
-intellijPlugins += "org.intellij.scala:2019.2.1".toPlugin
+// use Scala plugin version 2023.3.10
+intellijPlugins += "org.intellij.scala:2023.3.10".toPlugin
 // use latest nightly build from the repo
 intellijPlugins += "org.intellij.scala::Nightly".toPlugin
 // use specific version from Eap update channel
-intellijPlugins += "org.intellij.scala:2019.3.2:Eap".toPlugin
+intellijPlugins += "org.intellij.scala:2023.3.10:Eap".toPlugin
 // add JavaScript plugin but without its Grazie plugin dependency
 intellijPlugins += "JavaScript".toPlugin(excludedIds = Set("tanvd.grazi"))
+// add custom plugin with id `org.custom.plugin`, download it using the direct link https://org.example/path/to/your/plugin.zip
+intellijPlugins += "org.custom.plugin:https://org.example/path/to/your/plugin.zip".toPlugin
+// add custom plugin with id `org.custom.plugin` and resolve it from Marketplace.
+//  if it fails to resolve it in Marketplace it will use the fallback download link
+intellijPlugins += "org.custom.plugin".toPlugin.withFallbackDownloadUrl("https://org.example/path/to/your/plugin.zip")
 ```
+
+#### `intellijRuntimePlugins :: SettingKey[IdeaPlugin]`
+
+**Default**: `Seq.empty`
+
+IntelliJ plugins to load at runtime (includes tests). These plugins are not a compile time dependencies and cannot be
+referenced in code. Useful for testing your plugin in the presence of other plugins.
+
+The usage is the same as `intellijPlugins`.
 
 #### `searchPluginId :: Map[String, (String, Boolean)]`
 
@@ -369,6 +383,19 @@ To workaround this issue `sbt-idea-plugin` tries to automatically detect if your
 other plugins with Scala and filter out scala-library.jar from the resulting artifact. However, the heuristic cannot
 cover all possible cases and thereby this setting is exposed to allow manual control over bundling the scala-library.jar  
 
+#### `instrumentThreadingAnnotations :: SettingKey[Boolean]`
+
+**Default**: `false`
+
+Generate JVM bytecode to assert that a method is called on the correct IDEA thread. The supported annotations are:
+1. `com.intellij.util.concurrency.annotations.RequiresBackgroundThread`
+2. `com.intellij.util.concurrency.annotations.RequiresEdt`
+3. `com.intellij.util.concurrency.annotations.RequiresReadLock`
+4. `com.intellij.util.concurrency.annotations.RequiresReadLockAbsence`
+5. `com.intellij.util.concurrency.annotations.RequiresWriteLock`
+
+See: [IntelliJ IDEA ThreadingAssertions.java](https://github.com/JetBrains/intellij-community/blob/5758eb99b4a1971ebe75cda755693cc930949465/platform/core-api/src/com/intellij/util/concurrency/ThreadingAssertions.java)
+
 #### `packageOutputDir :: SettingKey[File]`
 
 **Default**: `target.value / "plugin" / intellijPluginName.in(ThisBuild).value.removeSpaces`
@@ -457,6 +484,12 @@ object AutoSbtIdeaPlugin extends AbstractSbtIdeaPlugin {
   override def trigger  = allRequirements
 }
 ``` 
+## Grouping with qualified names is available from Scala plugin version 2024.1.4
+In the Scala plugin 2024.1.4 a significant change has been made according to modules grouping and their naming. You can read more about this change [here](https://youtrack.jetbrains.com/issue/SCL-21288/Rewrite-deprecated-module-grouping-logic-to-the-new-API-grouping-with-qualified-names-is-now-supported.#focus=Comments-27-8977291.0-0). 
+Because of this change, it was necessary to change how the project names are generated in packageMapping tasks (`packageMappings` and `packageMappingsOffline`).
+To switch between the new and the old projects naming logic, `grouping.with.qualified.names.enabled` system property has been introduced.
+If your Scala plugin version is 2024.1.4 or higher, then in order to generate correct mappings you should set this property to true (`-Dgrouping.with.qualified.names.enabled=true`). 
+Otherwise, there is no need to do anything as this value is set to false by default.
 
 ## Known Issues and Limitations
 

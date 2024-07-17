@@ -8,6 +8,9 @@ import java.nio.file.*
 import java.nio.file.attribute.BasicFileAttributes
 import java.util
 import java.util.Collections
+import scala.util.Using
+import scala.util.Using.Releasable
+import scala.util.control.NonFatal
 
 trait JarPackager {
   def copySingleJar(from: Path): Unit
@@ -34,8 +37,13 @@ class SimplePackager(protected val myOutput: Path,
   }
 
   override def mergeIntoOne(sources: Seq[Path]): Unit = {
-    using(createOutputFS(myOutput)) { outputFS =>
-      sources.foreach(processSingleSource(_, outputFS))
+    val fs = try createOutputFS(myOutput) catch {
+      case NonFatal(ex) =>
+        //note: the exception doesn't contain hint about the input
+        throw new RuntimeException(s"Can't create input file system for path: $myOutput (${ex.getClass.getSimpleName} -${ex.getMessage})", ex)
+    }
+    usingFileSystem(fs) { fs =>
+      sources.foreach(processSingleSource(_, fs))
     }
     if (counter > 0)
       streams.log.info(s"Wrote $counter files to $myOutput")
@@ -97,7 +105,13 @@ class SimplePackager(protected val myOutput: Path,
   private def processSingleSource(src: Path, outputFS: FileSystem): Unit = {
     if (!src.toString.contains("jar!") && !Files.exists(src))
       return
-    using(createInputFS(src)) { fs =>
+
+    val fs = try createInputFS(src) catch {
+      case NonFatal(ex) =>
+        //note: the exception doesn't contain hint about the input
+        throw new RuntimeException(s"Can't create input file system for path: $src (${ex.getClass.getSimpleName} -${ex.getMessage})", ex)
+    }
+    usingFileSystem(fs) { fs =>
       val inputRoot = createInput(src, fs)
       walkEntry(inputRoot, outputFS) { (from, to) =>
         if (to.getParent != null)
@@ -106,6 +120,16 @@ class SimplePackager(protected val myOutput: Path,
           Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING)
         }
       }
+    }
+  }
+
+  private def usingFileSystem[R <: FileSystem : Releasable, A](fs: R)(body: R => A): A = {
+    //default file system doesn't support "close" method and otherwise throw "UnsupportedOperationException"
+    if (fs == FileSystems.getDefault) {
+      body(fs)
+    }
+    else {
+      Using.resource(fs)(body)
     }
   }
 
@@ -129,7 +153,7 @@ class SimplePackager(protected val myOutput: Path,
 }
 
 class ZipPackager(myOutput: Path)(implicit private val streams: TaskStreams)
-  extends SimplePackager(myOutput, new NoOpClassShader, ExcludeFilter.AllPass, new DumbIncrementalCache) {
+  extends SimplePackager(myOutput, new NoOpClassShader, ExcludeFilter.AllPass, DumbIncrementalCache) {
 
   override protected def createOutputFS(output: Path): FileSystem = {
     val env = new util.HashMap[String, String]()

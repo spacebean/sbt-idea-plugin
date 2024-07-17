@@ -3,7 +3,7 @@ package org.jetbrains.sbtidea.download.idea
 import org.jetbrains.sbtidea.CapturingLogger.captureLog
 import org.jetbrains.sbtidea.download.IdeaUpdater.{DUMB_KEY, DUMB_KEY_IDEA, DUMB_KEY_JBR, DUMB_KEY_PLUGINS}
 import org.jetbrains.sbtidea.download.api.InstallContext
-import org.jetbrains.sbtidea.{TmpDirUtils, pathToPathExt}
+import org.jetbrains.sbtidea.{PathExt, TmpDirUtils}
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.should.Matchers
 import sbt.*
@@ -35,7 +35,15 @@ class IdeaInstallerTest extends AnyFunSuite with Matchers with IdeaMock with Tmp
     val dist = getDistCopy
     val ideaInstallRoot = installer.installDist(dist)
     ideaInstallRoot.toFile.exists() shouldBe true
-    ideaInstallRoot.list.map(_.getFileName.toString) should contain allElementsOf Seq("lib", "bin", "plugins", "build.txt")
-  }
 
+    val fileNamesInRoot = ideaInstallRoot.list.map(_.getFileName.toString).toList
+    fileNamesInRoot should contain allElementsOf Seq(
+      "lib",
+      "bin",
+      "plugins",
+      "product-info.json",
+      "build.txt",
+      "dependencies.txt"
+    )
+  }
 }

@@ -1,26 +1,67 @@
 package org.jetbrains.sbtidea
 
+import org.jetbrains.sbtidea.IntellijPlugin.Settings
+
 import java.net.URL
-import java.util.regex.Pattern
 
 sealed trait IntellijPlugin {
-    var resolveSettings: IntellijPlugin.Settings = IntellijPlugin.defaultSettings
+  var resolveSettings: Settings = Settings.Default
 }
 
 object IntellijPlugin {
-  final case class Url(url: URL) extends IntellijPlugin
-    { override def toString: String = url.toString }
-  final case class Id(id: String, version: Option[String], channel: Option[String])(val url: Option[URL] = None) extends IntellijPlugin
-   { override def toString: String = id }
+
   final case class BundledFolder(name: String) extends IntellijPlugin
 
-  val URL_PATTERN: Pattern = Pattern.compile("^(?:(\\w+):)??(https?://.+)$")
-  val ID_PATTERN:  Pattern = Pattern.compile("^([^:]+):?([\\w.]+)?:?([\\w]+)?$")
-  val ID_WITH_URL: Pattern = Pattern.compile("^([^:]+):?([\\w.-]+)?:?(https?://.+)?$")
+  //noinspection ScalaUnusedSymbol,ScalaWeakerAccess
+  sealed trait WithKnownId extends IntellijPlugin {
+    def id: String
 
-  case class Settings(transitive: Boolean = true, optionalDeps: Boolean = true, excludedIds: Set[String] = Set.empty)
-  val defaultSettings: Settings = Settings()
+    override def toString: String = id
 
-  def isExternalPluginStr(str: String): Boolean =
-    str.contains(":") || ID_PATTERN.matcher(str).matches() || URL_PATTERN.matcher(str).matches()
+    //keeping the method here in order it's more convenient to use it like this:
+    //"org.intellij.plugins.markdown".toPlugin.withFallbackDownloadUrl(...)
+    def withFallbackDownloadUrl(url: Option[URL]): WithKnownId =
+      throw new UnsupportedOperationException("Only supported for IntellijPlugin.Id")
+
+    final def withFallbackDownloadUrl(url: String): WithKnownId =
+      withFallbackDownloadUrl(Some(url))
+
+    final def withFallbackDownloadUrl(url: Option[String])(implicit d: DummyImplicit): WithKnownId =
+      withFallbackDownloadUrl(url.map(new URL(_)))
+  }
+
+  /**
+   * @param fallbackDownloadUrl the url will be used if the plugin can't be resolved in Marketplace
+   */
+  final case class Id(
+    override val id: String,
+    version: Option[String],
+    channel: Option[String],
+    fallbackDownloadUrl: Option[URL] = None
+  ) extends WithKnownId {
+    override def withFallbackDownloadUrl(url: Option[URL]): WithKnownId =
+      this.copy(fallbackDownloadUrl = url)
+  }
+
+  final case class IdWithDownloadUrl(
+    override val id: String,
+    downloadUrl: URL
+  ) extends WithKnownId
+
+  case class Settings(
+    transitive: Boolean = true,
+    optionalDeps: Boolean = true,
+    excludedIds: Set[String] = Set.empty,
+  )
+
+  object Settings {
+    val Default: Settings = Settings()
+  }
+
+  private[sbtidea] implicit class IntellijPluginOps(private val target: IntellijPlugin) extends AnyVal {
+    def fallbackDownloadUrl: Option[URL] = target match {
+      case id: Id => id.fallbackDownloadUrl
+      case _ => None
+    }
+  }
 }

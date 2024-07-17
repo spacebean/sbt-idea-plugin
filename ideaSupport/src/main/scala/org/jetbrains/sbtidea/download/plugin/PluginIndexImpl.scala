@@ -2,14 +2,15 @@ package org.jetbrains.sbtidea.download.plugin
 
 import org.jetbrains.annotations.TestOnly
 import org.jetbrains.sbtidea.download.plugin.LocalPluginRegistry.extractPluginMetaData
-import org.jetbrains.sbtidea.packaging.artifact.using
-import org.jetbrains.sbtidea.{pathToPathExt, PluginLogger as log}
+import org.jetbrains.sbtidea.productInfo.ProductInfo
+import org.jetbrains.sbtidea.{PathExt, PluginLogger as log}
 import sbt.*
 
 import java.io.*
 import java.nio.file.{Files, Path}
 import java.util.stream.Collectors
 import scala.jdk.CollectionConverters.asScalaBufferConverter
+import scala.util.Using
 
 class PluginIndexImpl(ideaRoot: Path) extends PluginIndex {
 
@@ -45,20 +46,20 @@ class PluginIndexImpl(ideaRoot: Path) extends PluginIndex {
   }
 
   private def buildAndSaveIndex(): Repr = {
-    val fromPluginsDir = buildFromPluginsDir()
+    val plugins = buildFromPluginsDir
     try {
-      val pluginIds = fromPluginsDir.keys.toSeq
-        .filter(_.trim.nonEmpty) // for some reason there is some empty id
+      val pluginIds = plugins.keys.toSeq
+        .filter(_.trim.nonEmpty) // for some reason, there is some empty id
         .sorted
         .mkString(", ")
       log.info(s"Plugin ids from $INDEX_FILENAME: $pluginIds")
 
-      saveToFile(fromPluginsDir)
+      saveToFile(plugins)
     } catch {
       case e: Throwable =>
         log.warn(s"Failed to write back plugin index: $e")
     }
-    fromPluginsDir
+    plugins
   }
 
   override def put(descriptor: PluginDescriptor, installPath: Path): Unit = {
@@ -80,8 +81,8 @@ class PluginIndexImpl(ideaRoot: Path) extends PluginIndex {
   private def loadFromFile(): ReprMutable = {
     import PluginDescriptor.*
     val buffer = new ReprMutable
-    using(new FileInputStream(indexFile.toFile)) { fis =>
-      using(new ObjectInputStream(new BufferedInputStream(fis))) { stream =>
+    Using.resource(new FileInputStream(indexFile.toFile)) { fis =>
+      Using.resource(new ObjectInputStream(new BufferedInputStream(fis))) { stream =>
         val version = stream.readInt()
         val size = stream.readInt()
         if (version != INDEX_VERSION)
@@ -102,7 +103,7 @@ class PluginIndexImpl(ideaRoot: Path) extends PluginIndex {
   }
 
   private def saveToFile(idx: Repr): Unit = {
-    using(new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(indexFile.toFile)))) { stream =>
+    Using.resource(new ObjectOutputStream(new BufferedOutputStream(new FileOutputStream(indexFile.toFile)))) { stream =>
       stream.writeInt(INDEX_VERSION)
       stream.writeInt(idx.size)
       val values = idx.values
@@ -113,8 +114,11 @@ class PluginIndexImpl(ideaRoot: Path) extends PluginIndex {
     }
   }
 
-  private def buildFromPluginsDir(): Map[PluginId, (Path, PluginDescriptor)] = {
-    val pluginDirs = Files.list(ideaRoot.resolve("plugins")).collect(Collectors.toList[Path]).asScala
+  private def buildFromPluginsDir: Map[PluginId, (Path, PluginDescriptor)] = {
+    val pluginDirs = Files.list(ideaRoot.resolve("plugins")).collect(Collectors.toList[Path]).asScala.filter { file =>
+      //extra filtering of unexpected extensions (e.g., some strange file plugin-classpath.txt)
+      file.isDir || file.toString.endsWith(".jar")
+    }
     pluginDirs.flatMap { pluginDir =>
       val pluginMetaData = extractPluginMetaData(pluginDir)
       pluginMetaData match {

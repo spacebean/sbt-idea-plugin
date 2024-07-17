@@ -1,9 +1,8 @@
 package org.jetbrains.sbtidea.download.idea
 
-
 import org.jetbrains.sbtidea.download.api.*
 import org.jetbrains.sbtidea.download.{BuildInfo, FileDownloader, IdeaUpdater, NioUtils}
-import org.jetbrains.sbtidea.{pathToPathExt, PluginLogger as log}
+import org.jetbrains.sbtidea.{PathExt, PluginLogger as log}
 
 import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.{Files, Path}
@@ -78,10 +77,7 @@ class IdeaDistInstaller(buildInfo: BuildInfo) extends Installer[IdeaDist] {
         try {
           Files
             .walk(binDir)
-            .forEach(new Consumer[Path] {
-              override def accept(t: Path): Unit =
-                Files.setPosixFilePermissions(t, execPerms)
-            })
+            .forEach((t: Path) => Files.setPosixFilePermissions(t, execPerms))
         } catch {
           case e: Exception => log.warn(s"Failed to fix access rights for $binDir: ${e.getMessage}")
         }

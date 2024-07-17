@@ -2,8 +2,7 @@ package org.jetbrains.sbtidea.structure.sbtImpl
 
 import org.jetbrains.sbtidea.PluginLogger
 import sbt.ProjectRef
-import sbt.jetbrains.ideaPlugin.apiAdapter.*
-
+import sbt.internal.BuildDependencies
 
 class SbtProjectStructureExtractor(override val rootProject: ProjectRef,
                                    override val projectsData: Seq[SbtProjectData],
@@ -14,7 +13,7 @@ class SbtProjectStructureExtractor(override val rootProject: ProjectRef,
 
   override implicit val log: PluginLogger = _log
 
-  override def buildStub(data: SbtProjectData): SbtProjectNodeImpl = SbtProjectNodeImpl(data.thisProject, null, null, null)
+  override def buildStub(data: SbtProjectData): SbtProjectNodeImpl = SbtProjectNodeImpl(data.thisProject, data.thisProjectName, null, null, null)
 
   override def updateNode(node: SbtProjectNodeImpl, data: SbtProjectData): SbtProjectNodeImpl = {
     val children = collectChildren(node, data)

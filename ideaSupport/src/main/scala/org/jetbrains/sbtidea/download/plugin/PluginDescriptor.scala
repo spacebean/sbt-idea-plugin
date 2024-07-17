@@ -6,6 +6,9 @@ import java.nio.file.{Files, Path}
 import scala.xml.*
 import scala.xml.Utility.escape
 
+/**
+ * Represents data located in `plugin.xml` file
+ */
 case class PluginDescriptor(id: String,
                             vendor: String,
                             name: String,
@@ -44,7 +47,7 @@ case class PluginDescriptor(id: String,
    *
    * Most of the plugins keep all information in single file `plugin.xml` (id, name, sinceBuild, etc...)<br>
    * However some plugins can keep this information in multiple files.
-   * For example "Code With Me" has different implementations for IDEA and Rider.
+   * For example, "Code With Me" has different implementations for IDEA and Rider.
    * They keep common parts in `pluginBase.xml` (like id, name, vendor) and other parts (IDE-specific) in `plugin.xml` file.
    *
    * Alternative approach could be to truely resolve all "include" directives in `plugin.xml`, like: {{{
@@ -71,7 +74,6 @@ case class PluginDescriptor(id: String,
 }
 
 object PluginDescriptor {
-
   private val OPTIONAL_KEY  = "(optional) "
   private val OPTIONAL_ATTR = "optional"
 

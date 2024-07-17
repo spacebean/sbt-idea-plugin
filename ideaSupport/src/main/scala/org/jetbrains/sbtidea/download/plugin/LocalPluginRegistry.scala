@@ -1,26 +1,27 @@
 package org.jetbrains.sbtidea.download.plugin
 
 import org.jetbrains.sbtidea.download.*
-import org.jetbrains.sbtidea.{IntellijPlugin, pathToPathExt, PluginLogger as log}
+import org.jetbrains.sbtidea.download.api.InstallContext
+import org.jetbrains.sbtidea.{IntellijPlugin, PathExt, PluginLogger as log}
 import sbt.*
 
 import java.nio.file.{Files, Path}
-import scala.collection.mutable
 
-class LocalPluginRegistry (ideaRoot: Path) extends LocalPluginRegistryApi {
+class LocalPluginRegistry(ctx: InstallContext) extends LocalPluginRegistryApi {
   import LocalPluginRegistry.*
 
-  val index = new PluginIndexImpl(ideaRoot)
+  private val ideaRoot = ctx.baseDirectory
+
+  lazy val index = new PluginIndexImpl(ideaRoot)
 
   private def getDescriptorFromPluginFolder(name: String): Either[String, PluginDescriptor] =
     extractPluginMetaData(ideaRoot / "plugins" / name)
 
   override def getPluginDescriptor(ideaPlugin: IntellijPlugin): Either[String, PluginDescriptor] = ideaPlugin match {
-    case IntellijPlugin.Url(url) =>
-      index.getPluginDescriptor(url.toString).toRight("sdfsf")
-    case IntellijPlugin.Id(id, _, _) =>
-      index.getPluginDescriptor(id).toRight("f45f")
-    case IntellijPlugin.BundledFolder(name) => getDescriptorFromPluginFolder(name)
+    case idOwner: IntellijPlugin.WithKnownId =>
+      index.getPluginDescriptor(idOwner.id).toRight(s"Can't find plugin descriptor with id ${idOwner.id} in index ")
+    case IntellijPlugin.BundledFolder(name) =>
+      getDescriptorFromPluginFolder(name)
   }
 
   override def getAllDescriptors: Seq[PluginDescriptor] = index.getAllDescriptors
@@ -36,19 +37,29 @@ class LocalPluginRegistry (ideaRoot: Path) extends LocalPluginRegistryApi {
   }
 
   override def isPluginInstalled(ideaPlugin: IntellijPlugin): Boolean = {
-    ideaPlugin match {
-      case IntellijPlugin.Url(url) => index.contains(url.toString)
-      case IntellijPlugin.Id(id,  _, _) => index.contains(id)
+    val existsInIndex = ideaPlugin match {
+      case IntellijPlugin.Id(id,  _, _, _) =>
+        index.contains(id)
+      case IntellijPlugin.IdWithDownloadUrl(id, _) =>
+        index.contains(id)
       case IntellijPlugin.BundledFolder(name) => getDescriptorFromPluginFolder(name) match {
-        case Right(descriptor) if index.contains(descriptor.id) =>
-          true
         case Right(descriptor) =>
-          log.warn(s"Bundled plugin folder - '$name(${descriptor.id})' exists but not in index: corrupt index file?")
+          if (!index.contains(descriptor.id)) {
+            log.warn(s"Bundled plugin folder - '$name(${descriptor.id})' exists but not in index: corrupt index file?")
+          }
           true
         case Left(_)  =>
           false
       }
     }
+    if (existsInIndex) {
+      val path = getInstalledPluginRoot(ideaPlugin)
+      if (!path.exists) {
+        log.warn(s"Plugin was registered in index but plugin installation directory does not exist: $path")
+      }
+      path.exists
+    }
+    else false
   }
 
   override def getInstalledPluginRoot(ideaPlugin: IntellijPlugin): Path = ideaPlugin match {
@@ -60,8 +71,7 @@ class LocalPluginRegistry (ideaRoot: Path) extends LocalPluginRegistryApi {
         throw new MissingPluginRootException(ideaPlugin.toString)
     case _ =>
       val key = ideaPlugin match {
-        case IntellijPlugin.Url(url) => url.toString
-        case IntellijPlugin.Id(id, _, _) => id
+        case id: IntellijPlugin.Id => id.id
         case unsupported =>
           throw new RuntimeException(s"Unsupported plugin: $unsupported")
       }
@@ -74,9 +84,6 @@ class LocalPluginRegistry (ideaRoot: Path) extends LocalPluginRegistryApi {
 
 
 object LocalPluginRegistry {
-
-  private val instances: mutable.Map[Path, LocalPluginRegistry] =
-    new mutable.WeakHashMap[Path, LocalPluginRegistry]().withDefault(new LocalPluginRegistry(_))
 
   private class MissingPluginRootException(pluginName: String)
     extends RuntimeException(s"Can't find plugin root for $pluginName: check plugin name")
@@ -122,6 +129,4 @@ object LocalPluginRegistry {
     }
     descriptorFinal
   }
-
-  def instanceFor(ideaRoot: Path): LocalPluginRegistry = instances(ideaRoot)
 }

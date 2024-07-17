@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 
 /**
  * @author Leonid Shalupov
- *
+ * <br>
  * Copied from com.intellij.util.text.VersionComparatorUtil
  * This versions comparator is much smarter than StringUtil.compareVersionNumbers
  * E.g: is used for TeamCity plugins and Ruby gems versions
@@ -18,11 +18,8 @@ public class VersionComparatorUtil {
   private static final Pattern WORDS_SPLITTER = Pattern.compile("\\d+|[^\\d]+");
   private static final VersionTokenType[] VALUES = VersionTokenType.values();
 
-  public static final Comparator<String> COMPARATOR = new Comparator<String>() {
-    public int compare(String s1, String s2) {
-      return VersionComparatorUtil.compare(s1, s2);
-    }
-  };
+  @SuppressWarnings("unused") //can be used by sbt plugin users
+  public static final Comparator<String> COMPARATOR = VersionComparatorUtil::compare;
 
   private static final Function<String, Integer> DEFAULT_TOKEN_PRIORITY_PROVIDER = s -> VersionTokenType.lookup(s).getPriority();
 
@@ -63,7 +60,7 @@ public class VersionComparatorUtil {
       }
 
       str = str.trim();
-      if (str.length() == 0) {
+      if (str.isEmpty()) {
         return _WS;
       }
 
@@ -92,7 +89,7 @@ public class VersionComparatorUtil {
 
   private static List<String> splitVersionString(final String ver) {
     StringTokenizer st = new StringTokenizer(ver.trim(), "()._-;:/, +~");
-    List<String> result = new ArrayList<String>();
+    List<String> result = new ArrayList<>();
 
     while (st.hasMoreTokens()) {
       final Matcher matcher = WORDS_SPLITTER.matcher(st.nextToken());
@@ -108,7 +105,7 @@ public class VersionComparatorUtil {
   /**
    * Compare two version strings. See TeamCity documentation on requirements comparison
    * for formal description.
-   *
+   * <br>
    * Examples: 1.0rc1 < 1.0release, 1.0 < 1.0.1, 1.1 > 1.02
    * @return 0 if ver1 equals ver2, positive value if ver1 > ver2, negative value if ver1 < ver2
    */
@@ -165,15 +162,15 @@ public class VersionComparatorUtil {
 
   private static int compareNumbers(String n1, String n2) {
     // trim leading zeros
-    while(n1.length() > 0 && n2.length() > 0 && n1.charAt(0) == '0' && n2.charAt(0) == '0') {
+    while(!n1.isEmpty() && !n2.isEmpty() && n1.charAt(0) == '0' && n2.charAt(0) == '0') {
       n1 = n1.substring(1);
       n2 = n2.substring(1);
     }
 
     // starts with zero => less
-    if (n1.length() > 0 && n1.charAt(0) == '0') {
+    if (!n1.isEmpty() && n1.charAt(0) == '0') {
       return -1;
-    } else if (n2.length() > 0 && n2.charAt(0) == '0') {
+    } else if (!n2.isEmpty() && n2.charAt(0) == '0') {
       return 1;
     }
 

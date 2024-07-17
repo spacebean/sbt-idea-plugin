@@ -1,5 +1,6 @@
 package org.jetbrains.sbtidea
 
+import org.jetbrains.sbtidea.structure.sbtImpl.isScalaLibrary
 import sbt.Keys.{Classpath, moduleID}
 import sbt.{Keys as SbtKeys, *}
 

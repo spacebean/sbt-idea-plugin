@@ -1,11 +1,14 @@
 package org.jetbrains.sbtidea
 
 import org.jetbrains.sbtidea.download.*
+import org.jetbrains.sbtidea.instrumentation.ManipulateBytecode
 import org.jetbrains.sbtidea.packaging.PackagingKeys.*
+import org.jetbrains.sbtidea.productInfo.{ProductInfoExtraDataProvider, ProductInfoParser}
 import org.jetbrains.sbtidea.searchableoptions.BuildIndex
 import org.jetbrains.sbtidea.tasks.*
+import org.jetbrains.sbtidea.tasks.classpath.{AttributedClasspathTasks, ExternalDependencyClasspathTasks, PluginClasspathUtils}
 import sbt.Keys.*
-import sbt.{File, file, Keys as SbtKeys, *}
+import sbt.{Keys as _, *}
 
 import scala.annotation.nowarn
 import scala.collection.mutable
@@ -27,6 +30,7 @@ trait Init { this: Keys.type =>
     intellijPluginName        := name.in(LocalRootProject).value,
     intellijBuild             := BuildInfo.LATEST_EAP_SNAPSHOT,
     intellijPlatform          := IntelliJPlatform.IdeaCommunity,
+    intellijBuildInfo         := BuildInfo(intellijBuild.value, intellijPlatform.value),
     intellijDownloadSources   := true,
     jbrInfo                   := AutoJbr(),
     intellijPluginDirectory   := homePrefix / s".${intellijPluginName.value.removeSpaces}Plugin${intellijPlatform.value.edition}",
@@ -48,16 +52,27 @@ trait Init { this: Keys.type =>
         updateIntellij.value
       } else Def.task { }
     }.value,
+    productInfo := {
+      val productInfoFile = intellijBaseDirectory.value / "product-info.json"
+      ProductInfoParser.parse(productInfoFile)
+    },
+    productInfoExtraDataProvider := {
+      val intellijRoot = intellijBaseDirectory.value
+      val info = productInfo.value
+      val platform = jbrInfo.value.platform
+      new ProductInfoExtraDataProvider(intellijRoot, info, info.launchFor(platform))
+    },
     updateIntellij := {
       PluginLogger.bind(new SbtPluginLogger(streams.value))
       new CommunityUpdater(
         intellijBaseDirectory.value.toPath,
-        BuildInfo(
-          intellijBuild.value,
-          intellijPlatform.value
-        ),
+        intellijBuildInfo.value,
         jbrInfo.value,
-        intellijPlugins.?.all(ScopeFilter(inAnyProject)).value.flatten.flatten,
+        {
+          val pluginDeps = intellijPlugins.?.all(ScopeFilter(inAnyProject)).value.flatten.flatten
+          val runtimePlugins = intellijExtraRuntimePluginsInTests.?.all(ScopeFilter(inAnyProject)).value.flatten.flatten
+          (pluginDeps ++ runtimePlugins).distinct
+        },
         intellijDownloadSources.value
       ).update()
       updateFinished = true
@@ -73,28 +88,46 @@ trait Init { this: Keys.type =>
     }) compose (onLoad in Global).value
   )
 
+  private def intellijPluginsJars: Def.Initialize[Task[Seq[PluginJars]]] = Def.taskDyn {
+    getPluginJars(intellijPlugins.value)
+  }
+
+  private def intellijExtraRuntimePluginsInTestsJars: Def.Initialize[Task[Seq[PluginJars]]] = Def.taskDyn {
+    getPluginJars(intellijExtraRuntimePluginsInTests.value)
+  }
+
+  private def getPluginJars(plugins: Seq[IntellijPlugin]): Def.Initialize[Task[Seq[PluginJars]]] = Def.task {
+    PluginClasspathUtils.buildPluginJars(
+      intellijBaseDirectory.in(ThisBuild).value.toPath,
+      intellijBuildInfo.in(ThisBuild).value,
+      plugins,
+      new SbtPluginLogger(streams.value),
+      name.value
+    )
+  }
+
   lazy val projectSettings: Seq[Setting[?]] = Seq(
     intellijMainJars := {
-      //NOTE: see also filtering in org.jetbrains.sbtidea.tasks.IdeaConfigBuilder.intellijPlatformJarsClasspath
-      val globFilter: FileFilter = GlobFilter("*.jar") -- GlobFilter(IdeaConfigBuilder.JUnit3JarName)
-      val finder = intellijBaseDirectory.in(ThisBuild).value / "lib" * globFilter
-      finder.classpath
+      val p = productInfoExtraDataProvider.value
+      p.bootClasspathJars ++ p.productModulesJars
     },
-    intellijPlugins := Seq.empty,
-    intellijPluginJars :=
-      tasks.CreatePluginsClasspath.buildPluginClassPaths(
-        intellijBaseDirectory.in(ThisBuild).value.toPath,
-        BuildInfo(
-          intellijBuild.in(ThisBuild).value,
-          intellijPlatform.in(ThisBuild).value
-        ),
-        intellijPlugins.value,
-        new SbtPluginLogger(streams.value),
-        intellijAttachSources.in(Global).value,
-        name.value),
+    intellijTestJars := {
+      val extraDataProvider = productInfoExtraDataProvider.value
+      extraDataProvider.testFrameworkJars
+    },
+    intellijPluginJars := intellijPluginsJars.value,
+    intellijExtraRuntimePluginsJarsInTests := intellijExtraRuntimePluginsInTestsJars.value,
 
-    externalDependencyClasspath in Compile ++= UpdateWithIDEAInjectionTask.buildExternalDependencyClassPath.value,
-    externalDependencyClasspath in Test    ++= (externalDependencyClasspath in Compile).value,
+    intellijPlugins := Seq.empty,
+    intellijExtraRuntimePluginsInTests := Seq.empty,
+
+    intellijMainJarsClasspath := AttributedClasspathTasks.main.value,
+    intellijTestJarsClasspath := AttributedClasspathTasks.test.value,
+    intellijPluginJarsClasspath := AttributedClasspathTasks.plugins.value,
+    intellijExtraRuntimePluginsJarsInTestsClasspath := AttributedClasspathTasks.extraRuntimePluginsInTests.value,
+
+    Compile / externalDependencyClasspath ++= ExternalDependencyClasspathTasks.main.value,
+    Test / externalDependencyClasspath ++= ExternalDependencyClasspathTasks.test.value,
 
     update := UpdateWithIDEAInjectionTask.createTask.value,
 
@@ -127,13 +160,17 @@ trait Init { this: Keys.type =>
         filterScalaLibraryCp(previousValue)
     },
     packageArtifact := {
-      doPatchPluginXml.value
-      packageArtifact.value
-    },
+      // packageMappings must complete before patching
+      packageArtifact dependsOn Def.sequential(packageMappings, doPatchPluginXml)
+    }.value,
     packageArtifactDynamic := {
-      doPatchPluginXml.value
-      packageArtifactDynamic.value
-    },
+      // packageMappings must complete before patching
+      packageArtifactDynamic dependsOn Def.sequential(packageMappings, doPatchPluginXml)
+    }.value,
+    packageArtifactZip := Def.sequential(
+      buildIntellijOptionsIndex.toTask,
+      doPackageArtifactZip.toTask,
+    ).value,
 
     publishPlugin     := PublishPlugin.createTask.evaluated,
     signPlugin        := SignPluginArtifactTask.createTask.value,
@@ -155,6 +192,10 @@ trait Init { this: Keys.type =>
 
     unmanagedResourceDirectories in Compile += baseDirectory.value / "resources",
     unmanagedResourceDirectories in Test    += baseDirectory.value / "testResources",
+
+    instrumentThreadingAnnotations := false,
+    Compile / manipulateBytecode := ManipulateBytecode.manipulateBytecodeTask(Compile).value,
+    Test / manipulateBytecode := ManipulateBytecode.manipulateBytecodeTask(Test).value,
 
     aggregate.in(packageArtifactZip) := false,
     aggregate.in(packageMappings) := false,

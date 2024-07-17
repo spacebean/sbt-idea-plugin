@@ -1,9 +1,11 @@
 package org.jetbrains.sbtidea.tasks
 
+import org.jetbrains.sbtidea
 import org.jetbrains.sbtidea.Keys.*
-import org.jetbrains.sbtidea.download.BuildInfo
 import org.jetbrains.sbtidea.packaging.PackagingKeys.packageOutputDir
-import org.jetbrains.sbtidea.{ClasspathStrategy, PluginLogger, SbtPluginLogger, tasks}
+import org.jetbrains.sbtidea.tasks.classpath.PluginClasspathUtils
+import org.jetbrains.sbtidea.{PluginLogger, SbtPluginLogger}
+import org.jetbrains.sbtidea.packaging.hasProdTestSeparationEnabled
 import sbt.Keys.*
 import sbt.{Def, *}
 
@@ -14,12 +16,7 @@ object GenerateIdeaRunConfigurations extends SbtIdeaTask[Unit] {
 
     if (buildRoot == projectRoot) Def.task {
       PluginLogger.bind(new SbtPluginLogger(streams.value))
-      val buildInfo = BuildInfo(
-        intellijBuild.in(ThisBuild).value,
-        intellijPlatform.in(ThisBuild).value)
-      val actualIntellijBuild = buildInfo.getActualIdeaBuild(intellijBaseDirectory.in(ThisBuild).value.toPath)
-      val classLoadingStrategy = ClasspathStrategy.forVersion(actualIntellijBuild)
-      PluginLogger.info(s"Class loading strategy: since ${classLoadingStrategy.version}")
+      val buildInfo = sbtidea.Keys.intellijBuildInfo.in(ThisBuild).value
       val vmOptions = intellijVMOptions.value.copy(debug = false)
       val configName = name.value
       val dotIdeaFolder = baseDirectory.in(ThisBuild).value / ".idea"
@@ -31,32 +28,40 @@ object GenerateIdeaRunConfigurations extends SbtIdeaTask[Unit] {
         managedClasspath.all(ScopeFilter(inDependencies(ThisProject), inConfigurations(Test))).value
           .flatMap(_.map(_.data))
           .distinct
-
-      val allPlugins = intellijPlugins.all(ScopeFilter(inDependencies(ThisProject))).value.flatten.distinct
+      val allPlugins = {
+        val pluginDeps = intellijPlugins.all(ScopeFilter(inDependencies(ThisProject))).value.flatten
+        val runtimePlugins = intellijExtraRuntimePluginsInTests.all(ScopeFilter(inDependencies(ThisProject))).value.flatten
+        (pluginDeps ++ runtimePlugins).distinct
+      }
       val pluginRoots =
-        tasks.CreatePluginsClasspath.collectPluginRoots(
+        PluginClasspathUtils.collectPluginRoots(
           intellijBaseDirectory.in(ThisBuild).value.toPath,
           buildInfo,
           allPlugins,
           new SbtPluginLogger(streams.value),
-          name.value).map(_._2.toFile)
+          name.value
+        ).map(_._2.toFile)
       val config = Some(ideaConfigOptions.value)
         .map(x => if (x.ideaRunEnv.isEmpty) x.copy(ideaRunEnv = sbtRunEnv) else  x)
         .map(x => if (x.ideaTestEnv.isEmpty) x.copy(ideaTestEnv = sbtTestEnv) else x)
         .get
+      val projectName = name.value
+      val moduleName =
+        if (hasProdTestSeparationEnabled) s"$projectName.main"
+        else projectName
       val configBuilder = new IdeaConfigBuilder(
-        moduleName = name.value,
+        moduleName = moduleName,
         configName = configName,
         intellijVMOptions = vmOptions,
         dataDir = intellijPluginDirectory.value,
         intellijBaseDir = intellijBaseDirectory.in(ThisBuild).value,
+        productInfoExtraDataProvider.value,
         dotIdeaFolder = dotIdeaFolder,
         pluginAssemblyDir = packageOutputDir.value,
         ownProductDirs = ownClassPath,
-        pluginRoots = pluginRoots,
+        testPluginRoots = pluginRoots,
         extraJUnitTemplateClasspath = managedTestClasspath,
         options = config,
-        classpathStrategy = classLoadingStrategy
       )
 
       configBuilder.build()

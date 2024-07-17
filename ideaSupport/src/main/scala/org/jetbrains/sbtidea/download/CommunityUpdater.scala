@@ -8,16 +8,26 @@ import org.jetbrains.sbtidea.{IntellijPlugin, JbrInfo, PluginLogger as log}
 
 import java.nio.file.Path
 
-class CommunityUpdater(baseDirectory: Path, ideaBuildInfo: BuildInfo, jbrInfo: JbrInfo, plugins: Seq[IntellijPlugin], withSources: Boolean = true) {
+class CommunityUpdater(
+  baseDirectory: Path,
+  ideaBuildInfo: BuildInfo,
+  jbrInfo: JbrInfo,
+  plugins: Seq[IntellijPlugin],
+  //noinspection ScalaUnusedSymbol (can be used by sbt plugin users)
+  withSources: Boolean = true
+) {
 
   implicit protected val context: InstallContext =
-    InstallContext(baseDirectory = baseDirectory, downloadDirectory = baseDirectory.getParent)
+    InstallContext(
+      baseDirectory = baseDirectory,
+      downloadDirectory = baseDirectory.getParent,
+    )
 
   implicit protected val remoteRepoApi: PluginRepoUtils =
     new PluginRepoUtils
 
   implicit protected val localRegistry: LocalPluginRegistry =
-    new LocalPluginRegistry(baseDirectory)
+    new LocalPluginRegistry(context)
 
   protected val ideaDependency: IdeaDependency = IdeaDependency(ideaBuildInfo)
 
@@ -29,7 +39,7 @@ class CommunityUpdater(baseDirectory: Path, ideaBuildInfo: BuildInfo, jbrInfo: J
   def update(): Unit = {
     topoSort(dependencies).foreach(update)
 
-    val actualBuildNumber = ideaBuildInfo.getActualIdeaBuild(baseDirectory)
+    val actualBuildNumber = context.productInfo.buildNumber
     val buildNumber = ideaBuildInfo.buildNumber
     if (buildNumber != actualBuildNumber) {
       log.warn(

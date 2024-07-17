@@ -1,21 +1,33 @@
 package org.jetbrains.sbtidea.tasks
 
-import com.eclipsesource.json.*
+import org.apache.hc.client5.http.classic.methods.HttpGet
+import org.apache.hc.client5.http.impl.classic.HttpClients
+import org.apache.hc.core5.http.ClassicHttpResponse
+import org.apache.hc.core5.http.io.entity.EntityUtils
 import org.jetbrains.sbtidea.Keys.{intellijBaseDirectory, intellijBuild, intellijPlatform}
 import org.jetbrains.sbtidea.download.BuildInfo
+import org.jetbrains.sbtidea.download.api.InstallContext
 import org.jetbrains.sbtidea.download.plugin.LocalPluginRegistry
 import org.jetbrains.sbtidea.{PluginLogger, SbtPluginLogger}
 import sbt.Keys.streams
-import scalaj.http.Http
+import spray.json.*
+import spray.json.DefaultJsonProtocol.{RootJsArrayFormat, StringJsonFormat}
 
 import java.net.URLEncoder
 import java.nio.file.Path
 import java.util.regex.Pattern
-import scala.collection.JavaConverters.*
 
-class SearchPluginId(ideaRoot: Path, buildInfo: BuildInfo, useBundled: Boolean = true, useRemote: Boolean = true) {
+class SearchPluginId(
+  ideaRoot: Path,
+  buildInfo: BuildInfo,
+  useBundled: Boolean = true,
+  useRemote: Boolean = true
+) {
 
-  private val REPO_QUERY = "https://plugins.jetbrains.com/api/search/plugins?search=%s&build=%s"
+  private val context: InstallContext = InstallContext(baseDirectory = ideaRoot, downloadDirectory = ideaRoot)
+
+  private def getMarketplaceSearchUrl(query: String, build: String) =
+    "https://plugins.jetbrains.com/api/search/plugins?search=%s&build=%s".format(query, build)
 
   // true if plugin was found in the remote repo
   def apply(query: String): Map[String, (String, Boolean)] = {
@@ -26,7 +38,7 @@ class SearchPluginId(ideaRoot: Path, buildInfo: BuildInfo, useBundled: Boolean =
 
   private def searchPluginIdLocal(query: String): Map[String, (String, Boolean)] = {
     val pattern = Pattern.compile(query)
-    val registry = new LocalPluginRegistry(ideaRoot)
+    val registry = new LocalPluginRegistry(context)
     val allDescriptors = registry.getAllDescriptors
     allDescriptors
         .filter(descriptor => pattern.matcher(descriptor.name).find() || pattern.matcher(descriptor.id).find())
@@ -34,22 +46,30 @@ class SearchPluginId(ideaRoot: Path, buildInfo: BuildInfo, useBundled: Boolean =
         .toMap
   }
 
-  // Apparently we can't use json4s when cross-compiling for sbt because there are BOTH no shared versions AND binary compatibility
-  private def searchPluginIdRemote(query: String): Map[String, (String, Boolean)] = {
+  private def searchPluginIdRemote(queryRaw: String): Map[String, (String, Boolean)] = {
     try {
-      val param = URLEncoder.encode(query, "UTF-8")
-      val url = REPO_QUERY.format(param, s"${buildInfo.edition.edition}-${buildInfo.getActualIdeaBuild(ideaRoot)}")
-      val data = Http(url).asString.body
-      val json = Json.parse(data)
-      val values = json.asArray().values().asScala.map(_.asObject())
-      val names = values.map(_.getString("name", "") -> true)
-      val ids = values.map(_.getString("xmlId", ""))
+      val query: String = URLEncoder.encode(queryRaw, "UTF-8")
+      val build: String = s"${buildInfo.edition.edition}-${context.productInfo.buildNumber}"
+      val url: String = getMarketplaceSearchUrl(query, build)
+      val data: String = getHttpGetResponseString(url)
+
+      val jsonAst = data.parseJson
+      val jsonArray = jsonAst.convertTo[JsArray]
+      val values = jsonArray.elements.map(_.asJsObject())
+      val names = values.map(jsObject => jsObject.fields("name").convertTo[String] -> true)
+      val ids = values.map(jsObject => jsObject.fields("xmlId").convertTo[String])
       ids.zip(names).toMap
     } catch {
       case ex: Throwable =>
         PluginLogger.warn(s"Failed to query IJ plugin repo: $ex")
         Map.empty
     }
+  }
+
+  private def getHttpGetResponseString(url: String): String = {
+    HttpClients.createDefault.execute(new HttpGet(url), (response: ClassicHttpResponse) => {
+      EntityUtils.toString(response.getEntity, "UTF-8")
+    })
   }
 }
 

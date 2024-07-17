@@ -2,8 +2,7 @@ package org.jetbrains.sbtidea.download.idea
 
 import org.jetbrains.sbtidea.Keys.*
 import org.jetbrains.sbtidea.PluginLogger as log
-import org.jetbrains.sbtidea.download.BuildInfo
-import org.jetbrains.sbtidea.download.IdeaUpdater.IJ_REPO_OVERRIDE
+import org.jetbrains.sbtidea.download.{BuildInfo, NotFoundHttpResponseCode}
 import sbt.{MavenRepository, url}
 
 import java.io.IOException
@@ -97,22 +96,6 @@ object IntellijVersionUtils {
     )
   }
 
-  private val BaseIntelliJRepositoryUrl = {
-    val urlFormEnv = System.getProperty(IJ_REPO_OVERRIDE)
-    if (urlFormEnv != null) {
-      log.warn(s"[$LoggerName] Using non-default IntelliJ repository URL: $urlFormEnv")
-      urlFormEnv
-    } else {
-      "https://www.jetbrains.com/intellij-repository"
-    }
-  }
-
-  private object IntellijRepositories {
-    val Releases: MavenRepository = MavenRepository("intellij-repository-releases", s"$BaseIntelliJRepositoryUrl/releases")
-    val Eap: MavenRepository = MavenRepository("intellij-repository-eap", s"$BaseIntelliJRepositoryUrl/snapshots")
-    val Nightly: MavenRepository = MavenRepository("intellij-repository-nightly", s"$BaseIntelliJRepositoryUrl/nightly")
-  }
-
   private case class IntelliJProductCoordinates(groupPath: String, artifactId: String)
 
   private def getCoordinates(platform: IntelliJPlatform): IntelliJProductCoordinates = platform match {
@@ -162,7 +145,7 @@ object IntellijVersionUtils {
       connection.connect()
       val rc = connection.getResponseCode
       connection.disconnect()
-      rc != 404
+      rc != NotFoundHttpResponseCode
     } catch {
       case _: IOException | _: SocketTimeoutException =>
         //no internet, for example

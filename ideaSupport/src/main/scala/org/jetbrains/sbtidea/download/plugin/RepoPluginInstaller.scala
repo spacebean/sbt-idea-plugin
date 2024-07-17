@@ -1,7 +1,8 @@
 package org.jetbrains.sbtidea.download.plugin
 
+import org.jetbrains.sbtidea.download.FileDownloader.DownloadException
 import org.jetbrains.sbtidea.download.api.*
-import org.jetbrains.sbtidea.download.{BuildInfo, FileDownloader, IdeaUpdater, NioUtils, PluginXmlDetector, VersionComparatorUtil}
+import org.jetbrains.sbtidea.download.{BuildInfo, FileDownloader, IdeaUpdater, NioUtils, NotFoundHttpResponseCode, PluginXmlDetector, VersionComparatorUtil}
 import org.jetbrains.sbtidea.{IntellijPlugin, PluginLogger as log}
 
 import java.nio.file.{Files, Path}
@@ -16,17 +17,30 @@ class RepoPluginInstaller(buildInfo: BuildInfo)
       isInstalledPluginUpToDate(art.caller.plugin)
 
   override def downloadAndInstall(art: RemotePluginArtifact)(implicit ctx: InstallContext): Unit = {
-    val dist = FileDownloader(ctx.baseDirectory.getParent).download(art.dlUrl)
+    val downloader = FileDownloader(ctx.baseDirectory.getParent)
+    val downloadUrl = art.dlUrl
+    val dist = try {
+      downloader.download(downloadUrl)
+    } catch {
+      case de: DownloadException if de.responseCode.contains(NotFoundHttpResponseCode) =>
+        art.caller.plugin.fallbackDownloadUrl match {
+          case Some(fallbackUrl) =>
+            log.warn(s"Plugin not found at $downloadUrl\nTrying to download from a fallback url $fallbackUrl")
+            downloader.download(fallbackUrl)
+          case _  =>
+            throw de
+        }
+    }
     installIdeaPlugin(art.caller.plugin, dist)
   }
 
   private[plugin] def installIdeaPlugin(plugin: IntellijPlugin, artifact: Path)(implicit ctx: InstallContext): Path = {
     val installedPluginRoot = if (!PluginXmlDetector.Default.isPluginJar(artifact)) {
-      val extractDir = Files.createTempDirectory(ctx.baseDirectory, s"${buildInfo.edition.name}-${buildInfo.buildNumber}-plugin")
-      log.info(s"Extracting plugin '$plugin to $extractDir")
-      sbt.IO.unzip(artifact.toFile, extractDir.toFile)
-      assert(Files.list(extractDir).count() == 1, s"Expected only single plugin folder in extracted archive, got: ${extractDir.toFile.list().mkString}")
-      val tmpPluginDir = Files.list(extractDir).findFirst().get()
+      val tmpPluginDir = extractPluginToTemporaryDir(
+        artifact,
+        plugin,
+        s"${buildInfo.edition.name}-${buildInfo.buildNumber}-plugin"
+      )
       val installDir = pluginsDir.resolve(tmpPluginDir.getFileName)
       NioUtils.delete(installDir)
       Files.move(tmpPluginDir, installDir)
@@ -58,10 +72,10 @@ class RepoPluginInstaller(buildInfo: BuildInfo)
           return false
         }
         plugin match {
-          case IntellijPlugin.Id(_, Some(version), _) if descriptor.version != version =>
+          case IntellijPlugin.Id(_, Some(version), _, _) if descriptor.version != version =>
             log.info(s"Locally installed plugin $plugin has different version: ${descriptor.version} != $version")
             return false
-          case IntellijPlugin.Id(_, None, channel) =>
+          case IntellijPlugin.Id(_, None, channel, _) =>
             getMoreUpToDateVersion(descriptor, channel) match {
               case None =>
               case Some(newVersion) =>
@@ -88,7 +102,7 @@ class RepoPluginInstaller(buildInfo: BuildInfo)
   private[plugin] def isPluginCompatibleWithIdea(metadata: PluginDescriptor)(implicit ctx: InstallContext): Boolean = {
     val lower = metadata.sinceBuild.replaceAll("^.+-", "") // strip IC- / PC- etc. prefixes
     val upper = metadata.untilBuild.replaceAll("^.+-", "")
-    val actualIdeaBuild = buildInfo.getActualIdeaBuild(ctx.baseDirectory)
+    val actualIdeaBuild = ctx.productInfo.buildNumber
     val lowerValid = compareIdeaVersions(lower, actualIdeaBuild) <= 0
     val upperValid = compareIdeaVersions(upper, actualIdeaBuild) >= 0
     lowerValid && upperValid
@@ -117,6 +131,19 @@ object RepoPluginInstaller {
       if (res != 0) return res
     }
     c1.length - c2.length
+  }
+
+  def extractPluginToTemporaryDir(
+    pluginZip: Path,
+    plugin: IntellijPlugin,
+    tempDirectoryName: String
+  )(implicit ctx: InstallContext): Path = {
+    val extractDir = Files.createTempDirectory(ctx.baseDirectory, tempDirectoryName)
+    log.info(s"Extracting plugin '$plugin to $extractDir")
+    sbt.IO.unzip(pluginZip.toFile, extractDir.toFile)
+    assert(Files.list(extractDir).count() == 1, s"Expected only single plugin folder in extracted archive, got: ${extractDir.toFile.list().mkString}")
+    val tmpPluginDir = Files.list(extractDir).findFirst().get()
+    tmpPluginDir
   }
 }
 

@@ -19,9 +19,9 @@ class IJRepoResolverTest extends AnyFunSuite with Matchers with IdeaMock with Tm
         resolver.resolve(IDEA_DEP).foreach(_.dlUrl)
       )
 
-      messages should contain("[warn] [IntellijVersionUtils] Using non-default IntelliJ repository URL: https://127.0.0.1:/non-existing-path")
-      messages should contain("[warn] [IntellijVersionUtils] Cannot detect artifact location for version 211.5538.2, fallback to: (211.5538-EAP-CANDIDATE-SNAPSHOT,intellij-repository-eap: https://127.0.0.1:/non-existing-path/snapshots)")
-      messages should contain("[warn] [IntellijVersionUtils] Cannot detect artifact location for version 211.5538.2, fallback to: (211.5538-EAP-CANDIDATE-SNAPSHOT,intellij-repository-eap: https://127.0.0.1:/non-existing-path/snapshots)")
+      messages should contain("[warn] [IntellijRepositories] Using non-default IntelliJ repository URL: https://127.0.0.1:/non-existing-path")
+      messages should contain("[warn] [IntellijVersionUtils] Cannot detect artifact location for version 242.14146.5, fallback to: (242.14146-EAP-CANDIDATE-SNAPSHOT,intellij-repository-eap: https://127.0.0.1:/non-existing-path/snapshots)")
+      messages should contain("[warn] [IntellijVersionUtils] Cannot detect artifact location for version 242.14146.5, fallback to: (242.14146-EAP-CANDIDATE-SNAPSHOT,intellij-repository-eap: https://127.0.0.1:/non-existing-path/snapshots)")
     } finally {
       sys.props -= IJ_REPO_OVERRIDE
     }

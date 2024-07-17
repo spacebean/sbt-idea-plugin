@@ -20,19 +20,19 @@ case class IntellijVMOptions(platform: IntelliJPlatform,
                              pluginPath: Path,
                              ideaHome: Path,
                              intellijDirectory: Path,
-                             xmx: Int = 1536,
+                             xmx: Int = 2048,
                              xms: Int = 128,
                              reservedCodeCacheSize: Int = 512,
                              softRefLRUPolicyMSPerMB: Int = 50,
                              gc: String = "-XX:+UseG1GC",
                              gcOpt: String = "-XX:CICompilerCount=2",
-                             @deprecated("This value is unused and will be deleted in future releases. In IntelliJ IDEA 2023.1 `-Didea.ProcessCanceledException` VM options is dropped (for details see https://youtrack.jetbrains.com/issue/IDEA-304945)")
-                             noPCE: Boolean = false,
                              debug: Boolean = true,
                              debugPort: Int = 5005,
                              suspend: Boolean = false,
                              test: Boolean = false,
-                             defaultOptions: Seq[String] = IntellijVMOptions.DEFAULT_STATIC_OPTS)
+                             defaultOptions: Seq[String] = IntellijVMOptions.DEFAULT_STATIC_OPTS) {
+  def withOption(opt: String): IntellijVMOptions = copy(defaultOptions = defaultOptions :+ opt)
+}
 
 object IntellijVMOptions {
 
@@ -55,8 +55,8 @@ object IntellijVMOptions {
       if (intellijVersion.forall(_ > Version("223.6160"))) {
         val pty4jFolderPath = (intellijDirectory / "lib/pty4j").toString.replace("\\", "/")
         val jnaFolderPath = (intellijDirectory / "lib/jna" / jnaFolderName).toString.replace("\\", "/")
-        buffer += s"-Dpty4j.preferred.native.folder=$pty4jFolderPath"
-        buffer += s"-Djna.boot.library.path=$jnaFolderPath"
+        buffer += s"-Dpty4j.preferred.native.folder=${OQ(pty4jFolderPath)}"
+        buffer += s"-Djna.boot.library.path=${OQ(jnaFolderPath)}"
         buffer += s"-Djna.nounpack=true"
         buffer += s"-Djna.nosys=true"
       }
@@ -125,6 +125,8 @@ object IntellijVMOptions {
       |-Djdk.module.illegalAccess.silent=true
       |-XX:+IgnoreUnrecognizedVMOptions
       |
+      |-XX:CompileCommand=exclude,com/intellij/openapi/vfs/impl/FilePartNodeRoot,trieDescend
+      |
       |--add-opens=java.base/java.io=ALL-UNNAMED
       |--add-opens=java.base/java.lang=ALL-UNNAMED
       |--add-opens=java.base/java.lang.reflect=ALL-UNNAMED
@@ -152,6 +154,7 @@ object IntellijVMOptions {
       |--add-opens=java.desktop/java.awt.peer=ALL-UNNAMED
       |--add-opens=java.desktop/javax.swing=ALL-UNNAMED
       |--add-opens=java.desktop/javax.swing.plaf.basic=ALL-UNNAMED
+      |--add-opens=java.desktop/javax.swing.text=ALL-UNNAMED
       |--add-opens=java.desktop/javax.swing.text.html=ALL-UNNAMED
       |--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED
       |--add-opens=java.desktop/sun.awt.datatransfer=ALL-UNNAMED

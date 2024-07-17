@@ -1,37 +1,73 @@
 package org.jetbrains.sbtidea
 
+import org.jetbrains.sbtidea.IntellijPlugin.Settings
+import org.jetbrains.sbtidea.PluginLogger as log
+
 import java.net.URL
+import scala.util.matching.Regex
 
 trait Utils {
+
   implicit class String2Plugin(str: String) {
-    import org.jetbrains.sbtidea.IntellijPlugin.*
-    def toPlugin: IntellijPlugin = {
-      val idMatcher  = ID_PATTERN.matcher(str)
-      val urlMatcher = URL_PATTERN.matcher(str)
-      val idWithUrlMatcher = ID_WITH_URL.matcher(str)
-      if (idMatcher.find()) {
-        val id = idMatcher.group(1)
-        val version = Option(idMatcher.group(2))
-        val channel = Option(idMatcher.group(3))
-        IntellijPlugin.Id(id, version, channel)()
-      } else if (idWithUrlMatcher.matches()) {
-        val id = idWithUrlMatcher.group(1)
-        val version = Option(idWithUrlMatcher.group(2))
-        val url = Option(idWithUrlMatcher.group(3)).map(new URL(_))
-        IntellijPlugin.Id(id, version, None)(url)
-      } else if (urlMatcher.find()) {
-        val name = Option(urlMatcher.group(1)).getOrElse("")
-        val url  = urlMatcher.group(2)
-        Url(new URL(url))
-      } else {
-        throw new RuntimeException(s"Failed to parse plugin: $str")
-      }
-    }
-    def toPlugin(excludedIds: Set[String] = Set.empty, transitive: Boolean = true, optionalDeps: Boolean = true): IntellijPlugin = {
+    def toPlugin: IntellijPlugin.WithKnownId =
+      Utils.parsePlugin(str)
+
+    def toPlugin(
+      excludedIds: Set[String] = Settings.Default.excludedIds,
+      transitive: Boolean = Settings.Default.transitive,
+      optionalDeps: Boolean = Settings.Default.optionalDeps,
+    ): IntellijPlugin.WithKnownId = {
       val res = toPlugin
-      val newSettings = Settings(transitive, optionalDeps, excludedIds)
+      val newSettings = IntellijPlugin.Settings(transitive, optionalDeps, excludedIds)
       res.resolveSettings = newSettings
       res
     }
   }
+}
+
+object Utils {
+  private def parsePlugin(str: String): IntellijPlugin.WithKnownId = str match {
+    case IdRegex(id, version, channel) =>
+      IntellijPlugin.Id(id, Option(version), Option(channel))
+    case IdWithCustomUrlRegex(id, version, url) =>
+      if (version != null) {
+        log.warn(s"Version `$version` in plugin reference `$id` is not used because a direct link is used to download the plugin: $url")
+      }
+      IntellijPlugin.IdWithDownloadUrl(id, new URL(url))
+    case _ =>
+      throw new RuntimeException(
+        s"""Failed to parse plugin: $str.
+           |Here are some examples of valid strings:
+           |${PluginStringExamples.mkString("\n")}""".stripMargin
+      )
+  }
+
+  val PluginStringExamples: Seq[String] = Seq(
+    """org.intellij.scala""",
+    """org.intellij.scala:2023.3.6""",
+    """org.intellij.scala:2023.3.6:Eap""",
+    """org.intellij.scala:2023.3.6:Nightly""",
+    """org.custom.plugin""",
+    """org.custom.plugin:2022.1.1""",
+    """org.custom.plugin:https://org.example/path/to/your/plugin.zip""",
+  )
+
+  /**
+   * id:[version]:[channel]
+   *
+   * Examples:
+   *  - plugin-id
+   *  - plugin-id:2023.3.1
+   *  - plugin-id:2023.3.1:eap
+   */
+  private val IdRegex: Regex = "^([^:]+):?([\\w.-]+)?:?(\\w+)?$".r
+
+  /**
+   * id:[channel]:url
+   *
+   * Examples:
+   *  - plugin-id:https://org.example
+   *  - plugin-id:2023.3.1:https://org.example //!!! version is not actually used, but it's parsed not to break old usages
+   */
+  private val IdWithCustomUrlRegex: Regex = "^([^:]+):?([\\w.-]+)?:?(https?://.+)$".r
 }

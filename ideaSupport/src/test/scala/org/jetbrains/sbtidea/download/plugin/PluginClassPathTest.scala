@@ -3,7 +3,7 @@ package org.jetbrains.sbtidea.download.plugin
 import org.jetbrains.sbtidea.ConsoleLogger
 import org.jetbrains.sbtidea.Keys.String2Plugin
 import org.jetbrains.sbtidea.download.idea.IdeaMock
-import org.jetbrains.sbtidea.tasks.CreatePluginsClasspath
+import org.jetbrains.sbtidea.tasks.classpath.PluginClasspathUtils
 import sbt.*
 
 import java.nio.file.Files
@@ -20,35 +20,37 @@ class PluginClassPathTest extends IntellijPluginInstallerTestBase with IdeaMock 
     installer.installIdeaPlugin(pluginJarMetadata.toPluginId, mockPluginJarDist)
 
     val classpath =
-      CreatePluginsClasspath(ideaRoot,
+      PluginClasspathUtils.buildPluginJars(
+        ideaRoot,
         IDEA_BUILDINFO,
         Seq("com.intellij.properties".toPlugin,
             "org.jetbrains.plugins.yaml".toPlugin,
             pluginJarMetadata.toPluginId,
             pluginZipMetadata.toPluginId),
         new ConsoleLogger,
-        addSources = true)
+      ).flatMap(_.pluginJars)
 
-    classpath.map(_.data.getName) should contain allElementsOf Seq("HOCON.jar", "yaml.jar", "Scala.jar", "properties.jar")
+    classpath.map(_.getName) should contain allElementsOf Seq("HOCON.jar", "yaml.jar", "Scala.jar", "properties.jar")
   }
 
   test("plugin classpath doesn't contain jars other than from 'lib'") {
     val stuffPath = pluginsRoot / "properties" / "lib" / "stuff"
     val wrongJar = "wrong.jar"
+    println(stuffPath.toFile.getParentFile.exists())
+    println(stuffPath.toFile.exists())
     Files.createDirectory(stuffPath)
     Files.createFile(stuffPath / wrongJar)
     Files.createFile(pluginsRoot / wrongJar)
 
     val classpath =
-      CreatePluginsClasspath(ideaRoot,
+      PluginClasspathUtils.buildPluginJars(
+        ideaRoot,
         IDEA_BUILDINFO,
         Seq("com.intellij.properties".toPlugin,
             "org.jetbrains.plugins.yaml".toPlugin),
         new ConsoleLogger,
-        addSources = true)
+      ).flatMap(_.pluginJars)
 
-    classpath.map(_.data.getName) should not contain wrongJar
+    classpath.map(_.getName) should not contain wrongJar
   }
-
-
 }
