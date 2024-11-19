@@ -1,9 +1,11 @@
 package org.jetbrains.sbtidea.tasks
 
+import coursier.{Dependency, Fetch, Module, ModuleName, Organization}
 import org.jetbrains.sbtidea.Keys.IdeaConfigBuildingOptions
+import org.jetbrains.sbtidea.packaging.hasProdTestSeparationEnabled
 import org.jetbrains.sbtidea.productInfo.ProductInfoExtraDataProvider
 import org.jetbrains.sbtidea.runIdea.{IntellijAwareRunner, IntellijVMOptions}
-import org.jetbrains.sbtidea.tasks.IdeaConfigBuilder.{pathPattern, pluginsPattern}
+import org.jetbrains.sbtidea.tasks.IdeaConfigBuilder.{computeJupiterRuntimeDependencies, pathPattern, pluginsPattern}
 import org.jetbrains.sbtidea.tasks.classpath.PluginClasspathUtils
 import org.jetbrains.sbtidea.{PathExt, PluginLogger as log}
 import sbt.*
@@ -12,15 +14,12 @@ import java.io.File
 import java.nio.file.{Path, Paths}
 import java.util.regex.Pattern
 import scala.annotation.tailrec
-import scala.collection.mutable
-import scala.collection.mutable.ArrayBuffer
 
 /**
   * @param testPluginRoots contains only those plugins which are listed in the project IntelliJ plugin dependencies and their transitive dependencies
   */
 class IdeaConfigBuilder(
-  moduleName: String,
-  configName: String,
+  projectName: String,
   intellijVMOptions: IntellijVMOptions,
   dataDir: File,
   intellijBaseDir: File,
@@ -36,10 +35,12 @@ class IdeaConfigBuilder(
 
   private val IDEA_ROOT_KEY = "idea.installation.dir"
 
+  private val artifactName = projectName
+
   def build(): Unit = {
     if (options.generateDefaultRunConfig) {
-      val content = buildRunConfigurationXML(configName, intellijVMOptions)
-      writeToFile(runConfigDir / s"$configName.xml", content)
+      val content = buildRunConfigurationXML(artifactName, intellijVMOptions)
+      writeToFile(runConfigDir / s"$artifactName.xml", content)
     }
     if (options.generateJUnitTemplate)
       writeToFile(runConfigDir / "_template__of_JUnit.xml", buildJUnitTemplate)
@@ -112,6 +113,14 @@ class IdeaConfigBuilder(
          Seq.empty
       }
 
+  private def resolveJUnitJupiterRuntime(testClasspath: Seq[Path]): Seq[Path] = {
+    val toResolve = computeJupiterRuntimeDependencies(testClasspath)
+    Fetch()
+      .withDependencies(toResolve)
+      .run()
+      .map(_.toPath)
+  }
+
   private def getCurrentLaunchPath: Option[Path] = {
     /*
     (java.class.path,/home/miha/.local/share/JetBrains/Toolbox/apps/IDEA-C/ch-1/203.5419.21.plugins/Scala/launcher/sbt-launch.jar)
@@ -159,6 +168,8 @@ class IdeaConfigBuilder(
   private def buildRunConfigurationXML(configurationName: String, vmOptions: IntellijVMOptions): String = {
     val env = mkEnv(options.ideaRunEnv)
     val vmOptionsStr = buildRunVmOptionsString(vmOptions)
+    val moduleName = generateModuleName(sourceSetModuleSuffix =  "main")
+
     s"""<component name="ProjectRunConfigurationManager">
        |  <configuration default="false" name="$configurationName" type="Application" factoryName="Application">
        |    $jreSettings
@@ -181,7 +192,7 @@ class IdeaConfigBuilder(
        |    <method v="2">
        |      <option name="Make" enabled="true" />
        |      <option name="BuildArtifacts" enabled="true">
-       |        <artifact name="$moduleName" />
+       |        <artifact name="$artifactName" />
        |      </option>
        |    </method>
        |  </configuration>
@@ -196,11 +207,12 @@ class IdeaConfigBuilder(
   }
 
   private def buildTestClasspath: Seq[String] = {
-    val classPathEntries: mutable.Buffer[String] = new ArrayBuffer()
+    val classPathEntries = Seq.newBuilder[String]
 
     //plugin jars must go first when using CLASSLOADER_KEY
     //example: ./target/plugin/Scala/lib/*
     classPathEntries += (pluginAssemblyDir / "lib").toString + File.separator + "*"
+    classPathEntries += (pluginAssemblyDir / "lib" / "modules").toString + File.separator + "*"
 
     classPathEntries ++= productInfoExtraDataProvider.bootClasspathJars.map(_.toString)
     classPathEntries ++= productInfoExtraDataProvider.productModulesJars.map(_.toString)
@@ -214,14 +226,21 @@ class IdeaConfigBuilder(
     //<sdkRoot>/plugins/junit/lib/junit-rt.jar
     val ijRuntimeJars = guessIJRuntimeJarsForJUnitTemplate()
     classPathEntries ++= ijRuntimeJars.map(_.toString)
+    val junitJupiterRuntimeJars = resolveJUnitJupiterRuntime(extraJUnitTemplateClasspath.map(_.toPath))
+    classPathEntries ++= junitJupiterRuntimeJars.map(_.toString)
 
     classPathEntries ++= extraJUnitTemplateClasspath.map(_.toString)
-    classPathEntries
+    classPathEntries.result()
   }
+
+  private def generateModuleName(sourceSetModuleSuffix: String): String =
+    if (hasProdTestSeparationEnabled) s"$projectName.$sourceSetModuleSuffix"
+    else projectName
 
   private def buildJUnitTemplate: String = {
     val env = mkEnv(options.ideaTestEnv)
     val vmOptionsStr = buildTestVmOptionsString
+    val moduleName = generateModuleName(sourceSetModuleSuffix = "test")
 
     val searchScope = if (options.testSearchScope.nonEmpty)
       s"""<option name="TEST_SEARCH_SCOPE">
@@ -247,7 +266,7 @@ class IdeaConfigBuilder(
        |    <method v="2">
        |      <option name="Make" enabled="true" />
        |      <option name="BuildArtifacts" enabled="true">
-       |        <artifact name="$moduleName" />
+       |        <artifact name="$artifactName" />
        |      </option>
        |    </method>
        |  </configuration>
@@ -265,4 +284,74 @@ class IdeaConfigBuilder(
 object IdeaConfigBuilder {
   private val pathPattern = Pattern.compile("(^.+sbt-launch\\.jar).*$")
   private val pluginsPattern = Pattern.compile("^.+\\.plugins$")
+
+  private[tasks] val fallbackJupiterVersion = "5.10.3"
+  private[tasks] val fallbackPlatformVersion = "1.10.3"
+
+  private[tasks] def computeJupiterRuntimeDependencies(testClasspath: Seq[Path]): Seq[Dependency] = {
+    def findJar(org: String, artifact: String): Option[(Path, String)] =
+      testClasspath.find { path =>
+        // org.junit.jupiter -> org/junit/jupiter or org\junit\jupiter
+        val orgPath = org.replace('.', File.separatorChar)
+        // Checks that the jar absolute path contains both the expected organization name and artifact name.
+        // This is done to filter out hypothetical jars that have the same name but a different organization.
+        path.toString.contains(orgPath) &&
+          path.getFileName.toString.matches(s"$artifact-(.*)\\.jar")
+      }.map(path => (path, artifact))
+
+    // Detect the version of the jupiter artifacts already on the classpath. If none, fall back to a hardcoded version.
+    val jupiterVersion = findJar("org.junit.jupiter", "junit-jupiter-api")
+      .orElse(findJar("org.junit.jupiter", "junit-jupiter-engine"))
+      .orElse(findJar("org.junit.vintage", "junit-vintage-engine"))
+      .flatMap { case (jar, artifact) =>
+        val versionRegex = s"$artifact-(.*)\\.jar".r
+
+        jar.getFileName.toString match {
+          case versionRegex(version) => Some(version)
+          case _ => None
+        }
+      }.getOrElse(fallbackJupiterVersion)
+
+    val jupiterVersionRegex = "5\\.(.*)".r
+
+    // Use the corresponding jupiter platform launcher version for the given jupiter version, e.g. 5.9.3 -> 1.9.3.
+    val platformVersion = jupiterVersion match {
+      case jupiterVersionRegex(rest) => s"1.$rest"
+      case _ => fallbackPlatformVersion
+    }
+
+    val dependencies = Seq.newBuilder[Dependency]
+
+    // Resolve the junit-jupiter-engine jar if not already on the test classpath.
+    findJar("org.junit.jupiter", "junit-jupiter-engine") match {
+      case Some(_) =>
+      case None =>
+        dependencies += Dependency(
+          Module(Organization("org.junit.jupiter"), ModuleName("junit-jupiter-engine")),
+          jupiterVersion
+        )
+    }
+
+    // Resolve the junit-vintage-engine jar if not already on the classpath.
+    findJar("org.junit.vintage", "junit-vintage-engine") match {
+      case Some(_) =>
+      case None =>
+        dependencies += Dependency(
+          Module(Organization("org.junit.vintage"), ModuleName("junit-vintage-engine")),
+          jupiterVersion
+        )
+    }
+
+    // Resolve the junit-platform-launcher jar if not already on the classpath.
+    findJar("org.junit.platform", "junit-platform-launcher") match {
+      case Some(_) =>
+      case None =>
+        dependencies += Dependency(
+          Module(Organization("org.junit.platform"), ModuleName("junit-platform-launcher")),
+          platformVersion
+        )
+    }
+
+    dependencies.result()
+  }
 }
