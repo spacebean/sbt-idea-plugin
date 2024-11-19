@@ -51,6 +51,7 @@ lazy val ideaSupport = (project in file("ideaSupport"))
   .dependsOn(core, packaging, visualizer)
   .settings(
     name := "sbt-idea-scala3-plugin",
+    version := "4.0.2",
     libraryDependencies ++= Seq(
       "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1",
 
